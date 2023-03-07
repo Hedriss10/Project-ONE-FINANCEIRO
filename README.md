@@ -8,7 +8,13 @@
 - Deixar de forma de input para que o usuario selecione a data e sistema retorna para ele qual é a melhor combinação.
 - Fazer o multiprocessing em todos os ativos para que escolhe a melhor combinação.
 
+---
 
+**rsi** 
+calcular totas as possibilidas de cruzamento de médias moveis do RSI - 
+Nestas possibilidades calculadas verificar o periodo e calcular o maior ganho de eficiencia
+
+---
 ### Indicadores:
 os osciladores q usaremos serao:
 * 0 - RSI
