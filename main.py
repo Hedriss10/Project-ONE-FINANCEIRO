@@ -1,60 +1,121 @@
-"""
-Na análise técnica de ações e outros ativos financeiros, 
-a "P" usualmente se refere ao número de períodos de tempo usados para calcular uma média móvel e a "Q" se refere à quantidade de períodos de tempo usados para calcular uma segunda média móvel do resultado da primeira média móvel.
-
-Uma estratégia comum é usar uma média móvel rápida para indicar tendências próximas ao que aconteceu no dia anterior e uma média móvel lenta relativamente, como o componente "suave" da tendência mais ampla do preço.
-Portanto o P estabelece o número de períodos para se realizar a primeira média móvel e o Q o número distinto de período utilizado para suavizar a primeira média.
-
-Returns:
-    _type_: _description_
-"""
-
-#Validando test de timesleep
+import os
 import pandas as pd
 import numpy as np
-from ta.momentum import RSIIndicator
 from multiprocessing import Pool
 
 
-# função para calcular as médias móveis do RSI
-def calc_MM_RSI(periodo):
-    # lê os dados
-    df = pd.read_csv('data\\6A1.csv', parse_dates=['time'])
-    df.set_index('time', inplace=True)
+# Define o número de processos a serem usados pelo multiprocessing
+num_processes = os.cpu_count()
 
-    # calcula o RSI com base no período fornecido pelo usuário
-    rsi = RSIIndicator(df['close'], periodo).rsi()
 
-    results = []
 
-    # cria um loop para calcular todas as possibilidades de médias móveis do RSI
-    for p in range(1, 21):
-        for q in range(1, 21):
-            # calcula a média móvel do RSI
-            ma_rsi = rsi.rolling(window=p).mean().rolling(window=q).mean()
+# Função para calcular o RSI de um DataFrame de preços
+def calculate_rsi(prices, n=14):
+    deltas = np.diff(prices)
+    seed = deltas[:n+1]
+    up = seed[seed >= 0].sum()/n
+    down = -seed[seed < 0].sum()/n
+    rs = up/down
+    rsi = np.zeros_like(prices)
+    rsi[:n] = 100. - 100./(1.+rs)
 
-            # calcula o ganho de eficiência da média móvel do RSI
-            ganho_eficiencia = ((ma_rsi.shift(-1) - df['close'].shift(-1)) / df['close'].shift(-1)).mean()
+    for i in range(n, len(prices)):
+        delta = deltas[i-1]
 
-            # adiciona os resultados em uma lista
-            results.append(f"Média móvel: {p}/{q} | Ganho de eficiência: {ganho_eficiencia:.2f}")
+        if delta > 0:
+            upval = delta
+            downval = 0.
+        else:
+            upval = 0.
+            downval = -delta
 
-    return results
+        up = (up*(n-1) + upval)/n
+        down = (down*(n-1) + downval)/n
+
+        rs = up/down
+        rsi[i] = 100. - 100./(1.+rs)
+
+    return rsi
+
+
+def calculate_cci(prices, n=20):
+    typical_prices = (prices['high'] + prices['low'] + prices['close']) / 3.0
+    sma_tp = typical_prices.rolling(window=n).mean()
+    mad_tp = abs(typical_prices - sma_tp).rolling(window=n).mean()
+    cci = (typical_prices - sma_tp) / (0.015 * mad_tp)
+    return cci
+
+
+def calculate_moving_average_crossover(df, rsi_period, ma_periods):
+    # Calcula o RSI
+    df['rsi'] = calculate_rsi(df['close'], n=rsi_period)
+
+    # Calcula as médias móveis do RSI
+    for period in ma_periods:
+        col_name = 'ma_{}'.format(period)
+        df[col_name] = df['rsi'].rolling(period).mean()
+
+    # Identifica os cruzamentos de médias móveis
+    crossovers = []
+    for i in range(1, len(ma_periods)):
+        ma_short = ma_periods[i-1]
+        ma_long = ma_periods[i]
+        col_short = 'ma_{}'.format(ma_short)
+        col_long = 'ma_{}'.format(ma_long)
+        df.loc[df[col_short] > df[col_long], 'cross'] = 1
+        df.loc[df[col_short] <= df[col_long], 'cross'] = 0
+        df['signal'] = df['cross'].diff()
+        crossovers.append((ma_short, ma_long, df['signal'].sum()))
+
+    return crossovers
+
+
+# Função para processar um arquivo CSV e retornar as informações de cruzamento de médias móveis
+def process_csv_file(file_path, rsi_period, ma_periods):
+    df = pd.read_csv(file_path)
+    crossovers = calculate_moving_average_crossover(df, rsi_period, ma_periods)
+    return crossovers
+
 
 if __name__ == '__main__':
-    # define o número de processos
-    num_processes = 8
+    # Pergunta ao usuário qual é o período do RSI
+    rsi_period = int(input("Qual é o período do RSI? "))
 
-    # divide o período em partes iguais para cada processo
-    periodos = [10] * num_processes
+    # Define os períodos das médias móveis
+    ma_periods = [10, 20, 50, 100]
 
-    with Pool(processes=num_processes) as pool:
-        # executa a função calc_MM_RSI para cada processo e junta os resultados
-        results = pool.map(calc_MM_RSI, periodos)
+    # Lista todos os arquivos CSV na pasta "data"
+    csv_files = [os.path.join('data', f) for f in os.listdir('data') if f.endswith('.csv')]
 
-    # imprime a lista final de resultados 
-    for sublist in results:
-        for item in sublist:
-            print(item)
+    # Processa os arquivos CSV usando multiprocessing
+    with Pool(num_processes) as p:
+        results = [p.apply_async(process_csv_file, args=(f, rsi_period, ma_periods)) for f in csv_files]
+        crossovers = [result.get() for result in results]
 
+    # Calcula o ganho de eficiência de cada combinação de médias móveis
+    efficiency_gains = {}
+    for i, ma_short in enumerate(ma_periods):
+        for j, ma_long in enumerate(ma_periods):
+            if ma_short >= ma_long:
+                continue
+            signals = []
+            for file_crossovers in crossovers:
+                for crossover in file_crossovers:
+                    if crossover[0] == ma_short and crossover[1] == ma_long:
+                        signals.append(crossover[2])
+            if len(signals) > 0:
+                total_signals = len(signals)
+                total_correct_signals = sum(1 for s in signals if s > 0)
+                efficiency_gains[(ma_short, ma_long)] = total_correct_signals / total_signals
 
+    # Exibe os resultados
+    print("Ganho de eficiência para cada combinação de médias móveis:")
+    for ma_short, ma_long in efficiency_gains:
+        print("  {}-{}: {:.2}".format(ma_short, ma_long, efficiency_gains[(ma_short, ma_long)]))
+
+    print("\nCruzamentos de médias móveis para cada arquivo:")
+    for i, file_path in enumerate(csv_files):
+        print("\nArquivo {}: ".format(os.path.basename(file_path)))
+        for j, crossover in enumerate(crossovers[i]):
+            ma_short, ma_long, signal = crossover
+            print("  {}-{}: {}".format(ma_short, ma_long, signal))
