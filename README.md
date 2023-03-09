@@ -11,7 +11,7 @@
 ---
 
 **rsi** 
-calcular totas as possibilidas de cruzamento de médias moveis do RSI - 
+calcular totas as possibilidas de cruzamento de médias moveis do RSI 
 Nestas possibilidades calculadas verificar o periodo e calcular o maior ganho de eficiencia
 
 ---
